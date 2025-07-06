@@ -1,0 +1,13 @@
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "${APP_PORT:-3002}:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./local/cache:/nginx_cache
+      - ./template-variables:/etc/nginx/templates/10-variables.conf.template:ro
+    restart: unless-stopped
+    environment:
+      API_KEY: "${API_KEY}"

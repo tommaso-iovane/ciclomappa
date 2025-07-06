@@ -1,0 +1,42 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/javascript-node
+{
+	"name": "Ciclomappa",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+	
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "npm install",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"svelte.svelte-vscode",
+				"NuclleaR.vscode-extension-auto-import",
+				"steoates.autoimport",
+				"chouzz.vscode-better-align",
+				"ecmel.vscode-html-css",
+				"Zignd.html-css-class-completion",
+				"Cardinal90.multi-cursor-case-preserve",
+				"christian-kohler.npm-intellisense",
+				"christian-kohler.path-intellisense",
+				"johnpapa.vscode-peacock",
+				"rvest.vs-code-prettier-eslint",
+				"esbenp.prettier-vscode",
+				"cschlosser.doxdocgen",
+				"ms-vsliveshare.vsliveshare",
+				"tomoki1207.vscode-input-sequence",
+				"bradlc.vscode-tailwindcss"
+			]
+		}
+	},
+	"containerEnv": {
+		"LAUNCH_EDITOR": "code"
+	},
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+
+}
