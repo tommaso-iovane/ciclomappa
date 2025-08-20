@@ -10,12 +10,14 @@
     import VectorLayer from 'ol/layer/Vector.js'
     import Feature from 'ol/Feature.js'
     import Point from 'ol/geom/Point.js'
+    import LineString from 'ol/geom/LineString.js'
     import Circle from 'ol/geom/Circle.js'
-    import { Style, Circle as CircleStyle, Fill, Stroke, Icon } from 'ol/style.js'
+    import { Style, Circle as CircleStyle, Fill, Stroke } from 'ol/style.js'
     import { toLonLat, fromLonLat } from 'ol/proj.js'
-    import { MapPin, Minus, Plus, Rotate3d } from '@lucide/svelte'
+    import { MapPin, Minus, Plus, Rotate3d, Route } from '@lucide/svelte'
     import { onMount, tick } from 'svelte'
     import Loader from './lib/Loader.svelte'
+    import NavigationInfo from './lib/NavigationInfo.svelte'
 
     const MIN_DISTANTE_TO_UPDATE = 2
 
@@ -29,16 +31,29 @@
 
     let lastCoordinates = []
     let currentPosition = null
-    let currentAccuracy = null
-    let zoom = 17
-    let enableRotation = true
-    let followingUser = true
-    let speedKmh = '0.00'
+    let zoom            = 17
+    let enableRotation  = $state(true)
+    let followingUser   = true
+    let speedKmh        = $state('0.00')
+    let isTracking      = $state(false)
+    let totalDistance   = $state(0)
+    let routeCoords = []
 
     let map
     let geolocation
     let positionFeature
     let accuracyFeature
+    let routeFeature
+    let routeLayer
+
+    const toggleTracking = () => {
+        isTracking = !isTracking
+        if (isTracking) {
+            routeFeature.getGeometry().setCoordinates([])
+            routeCoords = []
+            totalDistance = 0
+        }
+    }
 
     const init = () => {
         // Initialize Map
@@ -46,7 +61,9 @@
             target: 'map',
             layers: [
                 new TileLayer({
-                    source: customTileSource
+                    source: customTileSource,
+                    preload: 5,
+                    cacheSize: 4096
                 })
             ],
             view: new View({
@@ -54,7 +71,7 @@
                 zoom: 2
             })
         })
-    
+
         geolocation = new Geolocation({
             tracking: true,
             projection: map.getView().getProjection(),
@@ -64,7 +81,7 @@
                 timeout: 5000
             }
         })
-    
+
         positionFeature = new Feature()
         positionFeature.setStyle(
             new Style({
@@ -80,7 +97,7 @@
                 })
             })
         )
-    
+
         accuracyFeature = new Feature()
         accuracyFeature.setStyle(
             new Style({
@@ -93,20 +110,39 @@
                 })
             })
         )
-    
+
         // Vector layer to display the user's position and accuracy
-        const vectorLayer = new VectorLayer({
+        const positionLayer = new VectorLayer({
             source: new VectorSource({
                 features: [positionFeature, accuracyFeature]
             })
         })
-        map.addLayer(vectorLayer)
-    
+        map.addLayer(positionLayer)
+
+        // Route tracking layer
+        routeFeature = new Feature({
+            geometry: new LineString([])
+        })
+        routeFeature.setStyle(
+            new Style({
+                stroke: new Stroke({
+                    color: '#0f6eb6',
+                    width: 3
+                })
+            })
+        )
+        routeLayer = new VectorLayer({
+            source: new VectorSource({
+                features: [routeFeature]
+            })
+        })
+        map.addLayer(routeLayer)
+
         // Detect when the user manually moves the map by dragging and stop following
         map.on('pointerdrag', function () {
             followingUser = false
         })
-    
+
         // Initial view when map loads if geolocation is not immediately available
         map.once('rendercomplete', function () {
             if (!geolocation.getPosition()) {
@@ -114,7 +150,6 @@
             }
         })
     }
-
 
     function recenterMap(rotation = null) {
         if (!followingUser) {
@@ -134,18 +169,6 @@
             // Offset vector (down the screen by 1/8th of viewport height)
             let offset = [0, -viewportHeight / 8]
 
-            // If rotating, rotate the offset vector by -rotation (screen coordinates)
-            // let rot = rotation || map.getView().getRotation() || 0;
-            // const cos = Math.cos(rot);
-            // const sin = Math.sin(rot);
-            // 2D rotation matrix
-            // if (rotation && enableRotation) {
-            //     offset = [
-            //         offset[0] * cos - offset[1] * sin,
-            //         offset[0] * sin + offset[1] * cos
-            //     ];
-            // }
-
             const offsetCoordinates = map.getPixelFromCoordinate(coordinates)
             if (!offsetCoordinates) {
                 return
@@ -159,7 +182,6 @@
         }
         map.getView().animate(obj)
     }
-
 
     const recenterOnUser = () => {
         followingUser = true
@@ -231,8 +253,25 @@
         }
 
         currentPosition = coords
-        currentAccuracy = accuracy
         updatePositionFeatures(coords, accuracy) // <-- always update features
+
+        if (isTracking) {
+            const routeGeom = routeFeature.getGeometry()
+            const lastPoint = routeGeom.getLastCoordinate()
+            if (lastPoint) {
+                const [lon1, lat1] = toLonLat(lastPoint)
+                const R = 6371000 // Earth radius in meters
+                const toRad = (x) => (x * Math.PI) / 180
+                const dLat = toRad(lat - lat1)
+                const dLon = toRad(lon - lon1)
+                const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat)) * Math.sin(dLon / 2) ** 2
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+                const distance = R * c
+                totalDistance += distance
+            }
+            routeGeom.appendCoordinate(coords)
+            routeCoords.push(coords)
+        }
 
         updateLastCoordinates(coords)
         const avgBearing = getAverageBearing(lastCoordinates)
@@ -241,6 +280,18 @@
             rotation = (avgBearing * Math.PI) / 180
         }
         recenterMap(rotation)
+    }
+
+    function downloadRoute() {
+        const route = JSON.stringify(routeCoords)
+        const blob = new Blob([route], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'route.json'
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
     }
 
     function startGeolocation() {
@@ -332,22 +383,15 @@
 
     <div id="map" class="h-full w-full"></div>
 
-    <div class="absolute bottom-0 z-10 flex h-14 w-full items-center justify-between gap-2 rounded-t-2xl bg-white shadow-2xl">
-        <button onclick={recenterOnUser} class="btn ms-4 hover:text-white">
-            <MapPin size={16}></MapPin>
-        </button>
-
-        <div class="flex items-center gap-1">
-            <button onclick={zoomOut} class="btn" title="Top"><Minus size={16}></Minus></button>
-            <button onclick={zoomIn} class="btn" title="Left"><Plus size={16}></Plus></button>
-            <button class:btn-secondary={enableRotation} onclick={() => (enableRotation = !enableRotation)} class="btn"
-                ><Rotate3d size={16}></Rotate3d>
-            </button>
-        </div>
-
-        <div class="me-4 text-gray-800">
-            <span class="font-bold">{speedKmh || 0}</span>
-            <span>Km/h</span>
-        </div>
-    </div>
+    <NavigationInfo
+        bind:enableRotation
+        {recenterOnUser}
+        {zoomOut}
+        {zoomIn}
+        {isTracking}
+        {toggleTracking}
+        {speedKmh}
+        {totalDistance}
+        {downloadRoute}
+    ></NavigationInfo>
 </div>
