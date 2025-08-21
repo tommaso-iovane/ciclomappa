@@ -129,7 +129,7 @@
             new Style({
                 stroke: new Stroke({
                     color: '#0f6eb6',
-                    width: 3
+                    width: 5
                 })
             })
         )
@@ -147,7 +147,7 @@
         routeGuideFeature.setStyle(
             new Style({
                 stroke: new Stroke({
-                    color: 'rgba(15, 110, 182, .7)',
+                    color: '#32a852',
                     width: 3
                 })
             })
@@ -369,13 +369,48 @@
             {
                 enableHighAccuracy: true,
                 maximumAge: 0,
-                timeout: 5000
+                timeout: 10000
             }
         )
     }
 
     function loadRouteGuide() {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json,application/json'
+        input.onchange = (e) => {
+            const file = e.target.files[0]
+            if (!file) {
+                return
+            }
+            const reader = new FileReader()
+            reader.onload = (readerEvent) => {
+                const content = readerEvent.target.result
+                try {
+                    const coords = JSON.parse(content)
+                    if (isValidCoordinateArray(coords)) {
+                        routeGuideFeature.getGeometry().setCoordinates(coords)
+                    } else {
+                        alert('Invalid route file. The file should contain an array of coordinates.')
+                    }
+                } catch (error) {
+                    alert('Error parsing JSON file.')
+                    console.error(error)
+                }
+            }
+            reader.readAsText(file)
+        }
+        input.click()
+    }
 
+    function isValidCoordinateArray(coords) {
+        if (!Array.isArray(coords)) {
+            return false
+        }
+        if (coords.length === 0) {
+            return true // Empty route is valid
+        }
+        return coords.every((c) => Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number')
     }
 
     let wakeLock = null
