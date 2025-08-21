@@ -14,10 +14,10 @@
     import Circle from 'ol/geom/Circle.js'
     import { Style, Circle as CircleStyle, Fill, Stroke } from 'ol/style.js'
     import { toLonLat, fromLonLat } from 'ol/proj.js'
-    import { MapPin, Minus, Plus, Rotate3d, Route } from '@lucide/svelte'
     import { onMount, tick } from 'svelte'
     import Loader from './lib/Loader.svelte'
     import NavigationInfo from './lib/NavigationInfo.svelte'
+    import { getDistance } from 'ol/sphere.js' 
 
     const MIN_DISTANTE_TO_UPDATE = 2
 
@@ -45,6 +45,8 @@
     let accuracyFeature
     let routeFeature
     let routeLayer
+    let routeGuideFeature
+    let routeGuideLayer
 
     const toggleTracking = () => {
         isTracking = !isTracking
@@ -138,6 +140,25 @@
         })
         map.addLayer(routeLayer)
 
+        // Route guide  layer
+        routeGuideFeature = new Feature({
+            geometry: new LineString([])
+        })
+        routeGuideFeature.setStyle(
+            new Style({
+                stroke: new Stroke({
+                    color: 'rgba(15, 110, 182, .7)',
+                    width: 3
+                })
+            })
+        )
+        routeGuideLayer = new VectorLayer({
+            source: new VectorSource({
+                features: [routeGuideFeature]
+            })
+        })
+        map.addLayer(routeGuideLayer)
+
         // Detect when the user manually moves the map by dragging and stop following
         map.on('pointerdrag', function () {
             followingUser = false
@@ -158,7 +179,7 @@
         let obj = { duration: 100, zoom }
 
         if (rotation && enableRotation) {
-            console.log(rotation)
+            // console.log(rotation)
             obj.rotation = -rotation
         }
 
@@ -242,35 +263,53 @@
         if (lastCoordinates.length > 0) {
             const prev = lastCoordinates[lastCoordinates.length - 1]
             const [lon1, lat1] = toLonLat(prev)
-            const R = 6371000 // Earth radius in meters
-            const toRad = (x) => (x * Math.PI) / 180
-            const dLat = toRad(lat - lat1)
-            const dLon = toRad(lon - lon1)
-            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat)) * Math.sin(dLon / 2) ** 2
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-            const distance = R * c
+            const distance = getDistance([lon1, lat1], [lon, lat])
             if (distance < MIN_DISTANTE_TO_UPDATE) return
         }
 
         currentPosition = coords
-        updatePositionFeatures(coords, accuracy) // <-- always update features
+        updatePositionFeatures(coords, accuracy)
 
         if (isTracking) {
             const routeGeom = routeFeature.getGeometry()
-            const lastPoint = routeGeom.getLastCoordinate()
-            if (lastPoint) {
+            let distanceFromLastPoint = 0
+            if (routeGeom.getLastCoordinate()?.length) {
+                const lastPoint = routeGeom.getLastCoordinate()
                 const [lon1, lat1] = toLonLat(lastPoint)
-                const R = 6371000 // Earth radius in meters
-                const toRad = (x) => (x * Math.PI) / 180
-                const dLat = toRad(lat - lat1)
-                const dLon = toRad(lon - lon1)
-                const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat)) * Math.sin(dLon / 2) ** 2
-                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-                const distance = R * c
-                totalDistance += distance
+                distanceFromLastPoint = getDistance([lon1, lat1], [lon, lat])
+                totalDistance += distanceFromLastPoint
             }
-            routeGeom.appendCoordinate(coords)
-            routeCoords.push(coords)
+
+            const MIN_BEARING_DIFFERENCE_TO_ADD_POINT = 10 // degrees
+            const MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS = 50 // meters
+
+            if (routeCoords.length >= 2) {
+                const lastCoord = routeCoords[routeCoords.length - 1]
+                const secondLastCoord = routeCoords[routeCoords.length - 2]
+
+                const bearing1 = getBearing(secondLastCoord, lastCoord)
+                const bearing2 = getBearing(lastCoord, coords)
+                const bearingDifference = Math.min(Math.abs(bearing1 - bearing2), 360 - Math.abs(bearing1 - bearing2))
+
+                if (
+                    bearingDifference < MIN_BEARING_DIFFERENCE_TO_ADD_POINT &&
+                    distanceFromLastPoint < MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS
+                ) {
+                    // User is going straight, replace the last coordinate
+                    routeCoords[routeCoords.length - 1] = coords
+                    const currentGeomCoords = routeGeom.getCoordinates()
+                    currentGeomCoords[currentGeomCoords.length - 1] = coords
+                    routeGeom.setCoordinates(currentGeomCoords)
+                } else {
+                    // User changed direction, add a new coordinate
+                    routeGeom.appendCoordinate(coords)
+                    routeCoords.push(coords)
+                }
+            } else {
+                // Not enough points to determine direction, just add the coordinate
+                routeGeom.appendCoordinate(coords)
+                routeCoords.push(coords)
+            }
         }
 
         updateLastCoordinates(coords)
@@ -335,6 +374,10 @@
         )
     }
 
+    function loadRouteGuide() {
+
+    }
+
     let wakeLock = null
 
     async function requestWakeLock() {
@@ -359,15 +402,15 @@
     })
     requestWakeLock()
 
-    const zoomIn = () => {
-        zoom++
-        recenterMap()
-    }
+    // const zoomIn = () => {
+    //     zoom++
+    //     recenterMap()
+    // }
 
-    const zoomOut = () => {
-        zoom--
-        recenterMap()
-    }
+    // const zoomOut = () => {
+    //     zoom--
+    //     recenterMap()
+    // }
 
     onMount(async () => {
         await tick()
@@ -386,12 +429,11 @@
     <NavigationInfo
         bind:enableRotation
         {recenterOnUser}
-        {zoomOut}
-        {zoomIn}
         {isTracking}
         {toggleTracking}
         {speedKmh}
         {totalDistance}
+        {loadRouteGuide}
         {downloadRoute}
     ></NavigationInfo>
 </div>

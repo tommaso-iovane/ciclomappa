@@ -1,16 +1,15 @@
 <script>
-    import { Download, MapPin, Minus, Plus, Rotate3d, Route } from '@lucide/svelte'
+    import { Download, MapPin, Rotate3d, Route, UploadIcon } from '@lucide/svelte'
     import { slide } from 'svelte/transition'
 
     let {
         recenterOnUser,
-        zoomOut,
-        zoomIn,
         enableRotation = $bindable(),
         isTracking,
         toggleTracking,
         speedKmh,
         totalDistance,
+        loadRouteGuide,
         downloadRoute
     } = $props()
 </script>
@@ -27,6 +26,7 @@
             <button class:btn-secondary={enableRotation} onclick={() => (enableRotation = !enableRotation)} class="btn"
                 ><Rotate3d size={16}></Rotate3d>
             </button>
+            <button class="btn" onclick={loadRouteGuide}><UploadIcon size={16}></UploadIcon></button>
             <button class:btn-secondary={isTracking} onclick={toggleTracking} class="btn"><Route size={16}></Route> </button>
             {#if isTracking}
                 <button onclick={downloadRoute} transition:slide={{ duration: 200, axis: 'x' }} class="btn">
