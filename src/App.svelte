@@ -379,6 +379,7 @@
         input.type = 'file'
         input.accept = '.json,application/json'
         input.onchange = (e) => {
+            // @ts-ignore
             const file = e.target.files[0]
             if (!file) {
                 return
@@ -387,6 +388,7 @@
             reader.onload = (readerEvent) => {
                 const content = readerEvent.target.result
                 try {
+                    // @ts-ignore
                     const coords = JSON.parse(content)
                     if (isValidCoordinateArray(coords)) {
                         routeGuideFeature.getGeometry().setCoordinates(coords)
@@ -452,6 +454,7 @@
         init()
         startGeolocation()
     })
+
 </script>
 
 <Loader bind:show={showLoader}></Loader>
@@ -471,4 +474,5 @@
         {loadRouteGuide}
         {downloadRoute}
     ></NavigationInfo>
+
 </div>
