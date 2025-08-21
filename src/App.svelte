@@ -17,7 +17,12 @@
     import { onMount, tick } from 'svelte'
     import Loader from './lib/Loader.svelte'
     import NavigationInfo from './lib/NavigationInfo.svelte'
-    import { getDistance } from 'ol/sphere.js' 
+    import { getDistance } from 'ol/sphere.js'
+    import { BaseDirectory, writeTextFile } from '@tauri-apps/plugin-fs'
+    import ToastContainer from './lib/ToastContainer.svelte'
+    import { showToast } from './lib/toast.js'
+    import { getPlatform } from './lib/helper'
+    import { downloadDir } from '@tauri-apps/api/path';
 
     const MIN_DISTANTE_TO_UPDATE = 2
 
@@ -31,12 +36,12 @@
 
     let lastCoordinates = []
     let currentPosition = null
-    let zoom            = 17
-    let enableRotation  = $state(true)
-    let followingUser   = true
-    let speedKmh        = $state('0.00')
-    let isTracking      = $state(false)
-    let totalDistance   = $state(0)
+    let zoom = 17
+    let enableRotation = $state(true)
+    let followingUser = true
+    let speedKmh = $state('0.00')
+    let isTracking = $state(false)
+    let totalDistance = $state(0)
     let routeCoords = []
 
     let map
@@ -321,21 +326,34 @@
         recenterMap(rotation)
     }
 
-    function downloadRoute() {
+    async function downloadRoute() {
         const route = JSON.stringify(routeCoords)
-        const blob = new Blob([route], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'route.json'
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
+        const filename = `route-${Date.now()}.json`
+        if (getPlatform() === 'web') {
+            const blob = new Blob([route], { type: 'application/json' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = filename
+            a.click()
+            a.remove()
+            URL.revokeObjectURL(url)
+        } else {
+            try {
+                const dir = await downloadDir()
+                const path = `${dir}/${filename}`
+                await writeTextFile(path, route)
+                showToast(`Route saved to ${path}`)
+            } catch (err) {
+                console.error(err)
+                showToast('Failed to save route on Android.', 'error')
+            }
+        }
     }
 
     function startGeolocation() {
         if (!navigator.geolocation) {
-            alert('Geolocation is not supported by your browser.')
+            showToast('Geolocation is not supported by your browser.', 'error')
             return
         }
         navigator.geolocation.watchPosition(
@@ -354,16 +372,16 @@
             (err) => {
                 switch (err.code) {
                     case err.PERMISSION_DENIED:
-                        alert('Geolocation permission denied. Please enable location services.')
+                        showToast('Geolocation permission denied. Please enable location services.', 'error')
                         break
                     case err.POSITION_UNAVAILABLE:
-                        alert('Location information is unavailable.')
+                        showToast('Location information is unavailable.', 'error')
                         break
                     case err.TIMEOUT:
-                        alert('Geolocation request timed out. Try again.')
+                        showToast('Geolocation request timed out. Try again.', 'error')
                         break
                     default:
-                        alert('An unknown geolocation error occurred.')
+                        showToast('An unknown geolocation error occurred.', 'error')
                 }
             },
             {
@@ -393,10 +411,10 @@
                     if (isValidCoordinateArray(coords)) {
                         routeGuideFeature.getGeometry().setCoordinates(coords)
                     } else {
-                        alert('Invalid route file. The file should contain an array of coordinates.')
+                        showToast('Invalid route file. The file should contain an array of coordinates.', 'error')
                     }
                 } catch (error) {
-                    alert('Error parsing JSON file.')
+                    showToast('Error parsing JSON file.', 'error')
                     console.error(error)
                 }
             }
@@ -454,12 +472,13 @@
         init()
         startGeolocation()
     })
-
 </script>
 
 <Loader bind:show={showLoader}></Loader>
 
 <div class="relative h-full w-full" id="main">
+    <ToastContainer />
+
     <InfoBox></InfoBox>
 
     <div id="map" class="h-full w-full"></div>
@@ -474,5 +493,4 @@
         {loadRouteGuide}
         {downloadRoute}
     ></NavigationInfo>
-
 </div>
