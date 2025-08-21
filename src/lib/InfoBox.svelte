@@ -15,9 +15,12 @@
     }
 </script>
 
-<button onclick={showInfo} class="fixed top-4 right-4 z-10 flex items-center cursor-pointer rounded-md bg-white p-2 text-gray-900 shadow-md">
+<button
+    onclick={showInfo}
+    class="fixed top-4 right-4 z-10 flex cursor-pointer items-center rounded-md bg-white p-2 text-gray-900 shadow-md"
+>
     {#if !infoboxShown}
-        <div class="flex gap-1 me-2">First time? click here<ArrowRight></ArrowRight></div>
+        <div class="me-2 flex gap-1">First time? click here<ArrowRight></ArrowRight></div>
     {/if}
     <Info size={16}></Info>
 </button>
@@ -33,7 +36,11 @@
             <div class="mt-2">
                 This map is powered by <a class="link" href="https://www.opencyclemap.org/">opencyclemap.org</a>
             </div>
-
+            <div class="mt">
+                <a href="https://www.flaticon.com/free-icons/cycling" title="cycling icons"
+                    >Cycling icons created by smashingstocks - Flaticon</a
+                >
+            </div>
             <div class="mt-2">
                 <h3 class="text-lg">How to</h3>
                 <table class="table-cell-spacing w-full">
