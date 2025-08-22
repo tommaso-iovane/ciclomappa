@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "vite --port 5000 --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host 0.0.0.0",
     "apply:updates": "npx npm-check-updates -u"
   },
   "devDependencies": {
