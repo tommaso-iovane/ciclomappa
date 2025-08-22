@@ -1,5 +1,6 @@
 <script>
     import { ArrowRight, Download, Info, MapPin, Rotate3d, Route, UploadIcon } from '@lucide/svelte'
+    import InstallButton from './InstallButton.svelte'
 
     let show = $state(false)
     let infoboxShown = $state(localStorage.getItem('infobox_shown'))
@@ -31,6 +32,11 @@
             <div class="mb-2 flex items-center">
                 <h2 class="text-xl">Ciclomappa</h2>
                 <button class="btn ms-auto" onclick={close}>X</button>
+            </div>
+
+            <!-- PWA Install Button -->
+            <div class="mb-4">
+                <InstallButton />
             </div>
 
             <div class="mt-2">
