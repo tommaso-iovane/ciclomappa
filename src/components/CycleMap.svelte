@@ -14,7 +14,7 @@
     import Circle from 'ol/geom/Circle.js'
     import { Style, Circle as CircleStyle, Fill, Stroke } from 'ol/style.js'
     import { toLonLat, fromLonLat } from 'ol/proj.js'
-    import { onMount, tick } from 'svelte'
+    import { onMount, tick, onDestroy } from 'svelte'
     import Loader from './Loader.svelte'
     import NavigationInfo from './NavigationInfo.svelte'
     import { getDistance } from 'ol/sphere.js'
@@ -24,6 +24,8 @@
     const MIN_BEARING_DIFFERENCE_TO_ADD_POINT = 10 // degrees
     const MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS = 50 // meters
     const MIN_DISTANCE_FOR_ROTATION = 5 // meters
+    const ANIMATION_THROTTLE_MS = 100 // Throttle map animations
+    const BEARING_CACHE_SIZE = 20 // Cache for bearing calculations
 
     const customTileSource = new XYZ({
         url: `${import.meta.env.VITE_MAP_URL}/cycle/{z}/{x}/{y}.png`,
@@ -33,7 +35,10 @@
 
     let showLoader = $state(true)
 
-    let lastCoordinates = []
+    // Optimized data structures
+    let lastCoordinates = new Array(10) // Pre-allocate fixed size array
+    let lastCoordinatesIndex = 0
+    let lastCoordinatesCount = 0
     let currentPosition = null
     let lastRotationPosition = null 
     let zoom = 17
@@ -43,6 +48,13 @@
     let isTracking = $state(false)
     let totalDistance = $state(0)
     let routeCoords = []
+
+    // Performance optimization variables
+    let lastAnimationTime = 0
+    let bearingCache = {}  // Use object instead of Map for broader compatibility
+    let isAnimating = false
+    let geolocationWatchId = null
+    let recenterTimeout = null
 
     let map
     let geolocation
@@ -63,20 +75,25 @@
     }
 
     const init = () => {
-        // Initialize Map
+        // Initialize Map with performance optimizations
         map = new Map({
             target: 'map',
             layers: [
                 new TileLayer({
                     source: customTileSource,
-                    preload: 5,
-                    cacheSize: 4096
+                    preload: 3, // Reduced from 5 for better performance
+                    cacheSize: 2048, // Reduced cache size for memory efficiency
+                    className: 'ol-layer' // Enable GPU acceleration
                 })
             ],
             view: new View({
                 center: fromLonLat([0, 0]),
-                zoom: 2
-            })
+                zoom: 2,
+                enableRotation: true,
+                constrainRotation: false
+            }),
+            // Performance optimizations
+            pixelRatio: Math.min(window.devicePixelRatio || 1, 2) // Limit pixel ratio for performance
         })
 
         geolocation = new Geolocation({
@@ -178,13 +195,21 @@
     }
 
     function recenterMap(rotation = null) {
-        if (!followingUser) {
+        if (!followingUser || isAnimating) {
             return
         }
+
+        // Throttle animations for better performance
+        const now = performance.now()
+        if (now - lastAnimationTime < ANIMATION_THROTTLE_MS) {
+            return
+        }
+        lastAnimationTime = now
+        isAnimating = true
+
         let obj = { duration: 100, zoom }
 
         if (rotation && enableRotation) {
-            // console.log(rotation)
             obj.rotation = -rotation
         }
 
@@ -197,6 +222,7 @@
 
             const offsetCoordinates = map.getPixelFromCoordinate(coordinates)
             if (!offsetCoordinates) {
+                isAnimating = false
                 return
             }
             const newPixelCoordinates = [offsetCoordinates[0] + offset[0], offsetCoordinates[1] + offset[1]]
@@ -205,8 +231,17 @@
             obj.center = newCenter
         } else {
             console.warn('Current location not available.')
+            isAnimating = false
+            return
         }
-        map.getView().animate(obj)
+        
+        const animation = map.getView().animate(obj)
+        // Reset animation flag when animation completes
+        if (animation) {
+            setTimeout(() => { isAnimating = false }, obj.duration || 100)
+        } else {
+            isAnimating = false
+        }
     }
 
     const recenterOnUser = () => {
@@ -215,14 +250,38 @@
     }
 
     function updateLastCoordinates(coord) {
-        lastCoordinates.push(coord)
-        if (lastCoordinates.length > 10) {
-            lastCoordinates.shift()
+        // Use circular buffer for better performance
+        lastCoordinates[lastCoordinatesIndex] = coord
+        lastCoordinatesIndex = (lastCoordinatesIndex + 1) % 10
+        if (lastCoordinatesCount < 10) {
+            lastCoordinatesCount++
         }
     }
-    // Calculate average bearing from the last coordinates
-    function getAverageBearing(coords) {
+
+    // Get active coordinates from circular buffer
+    function getActiveCoordinates() {
+        if (lastCoordinatesCount === 0) return []
+        
+        const result = new Array(lastCoordinatesCount)
+        for (let i = 0; i < lastCoordinatesCount; i++) {
+            const index = (lastCoordinatesIndex - lastCoordinatesCount + i + 10) % 10
+            result[i] = lastCoordinates[index]
+        }
+        return result
+    }
+    // Calculate average bearing from the last coordinates with caching
+    function getAverageBearing() {
+        const coords = getActiveCoordinates()
         if (coords.length < 2) return null
+        
+        // Create cache key from coordinates
+        const cacheKey = coords.map((c) => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|')
+        
+        // Check cache first
+        if (bearingCache[cacheKey] !== undefined) {
+            return bearingCache[cacheKey]
+        }
+        
         let sumSin = 0
         let sumCos = 0
         for (let i = 1; i < coords.length; i++) {
@@ -234,10 +293,16 @@
         const avgRad = Math.atan2(sumSin, sumCos)
         let avgDeg = (avgRad * 180) / Math.PI
         if (avgDeg < 0) avgDeg += 360
+        
+        // Cache the result and limit cache size
+        const cacheKeys = Object.keys(bearingCache)
+        if (cacheKeys.length >= BEARING_CACHE_SIZE) {
+            delete bearingCache[cacheKeys[0]]
+        }
+        bearingCache[cacheKey] = avgDeg
+        
         return avgDeg
-    }
-
-    function getBearing(start, end) {
+    }    function getBearing(start, end) {
         // start and end are [x, y] in map projection, convert to lon/lat
         const [lon1, lat1] = toLonLat(start)
         const [lon2, lat2] = toLonLat(end)
@@ -255,9 +320,22 @@
     }
 
     function updatePositionFeatures(coords, accuracy) {
-        positionFeature.setGeometry(new Point(coords))
+        // Reuse existing geometry instead of creating new one
+        const positionGeom = positionFeature.getGeometry()
+        if (positionGeom) {
+            positionGeom.setCoordinates(coords)
+        } else {
+            positionFeature.setGeometry(new Point(coords))
+        }
+        
         if (accuracy !== undefined && accuracy !== null) {
-            accuracyFeature.setGeometry(new Circle(coords, accuracy))
+            const accuracyGeom = accuracyFeature.getGeometry()
+            if (accuracyGeom) {
+                accuracyGeom.setCenter(coords)
+                accuracyGeom.setRadius(accuracy)
+            } else {
+                accuracyFeature.setGeometry(new Circle(coords, accuracy))
+            }
         }
     }
 
@@ -265,8 +343,10 @@
         const coords = fromLonLat([lon, lat])
 
         // Only update if distance from last coordinate is more than MIN_DISTANTE_TO_UPDATE meters
-        if (lastCoordinates.length > 0) {
-            const prev = lastCoordinates[lastCoordinates.length - 1]
+        if (lastCoordinatesCount > 0) {
+            // Get the most recent coordinate from circular buffer
+            const prevIndex = (lastCoordinatesIndex - 1 + 10) % 10
+            const prev = lastCoordinates[prevIndex]
             const [lon1, lat1] = toLonLat(prev)
             const distance = getDistance([lon1, lat1], [lon, lat])
             if (distance < MIN_DISTANTE_TO_UPDATE) return
@@ -335,13 +415,19 @@
         
         let rotation = null
         if (shouldRotate) {
-            const avgBearing = getAverageBearing(lastCoordinates)
+            const avgBearing = getAverageBearing()
             if (avgBearing !== null) {
                 rotation = (avgBearing * Math.PI) / 180
             }
         }
         
-        recenterMap(rotation)
+        // Debounce recenter calls to reduce animation frequency
+        if (recenterTimeout) {
+            clearTimeout(recenterTimeout)
+        }
+        recenterTimeout = setTimeout(() => {
+            recenterMap(rotation)
+        }, 50) // Small delay to batch rapid position updates
     }
 
     async function downloadRoute() {
@@ -349,12 +435,18 @@
         const filename = `route-${Date.now()}.json`
         const blob = new Blob([route], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
+        
+        try {
+            const a = document.createElement('a')
+            a.href = url
+            a.download = filename
+            document.body.appendChild(a) // Ensure it's in the DOM
+            a.click()
+            document.body.removeChild(a) // Clean up
+        } finally {
+            // Always clean up the URL object
+            URL.revokeObjectURL(url)
+        }
     }
 
     function startGeolocation() {
@@ -362,7 +454,13 @@
             showToast('Geolocation is not supported by your browser.', 'error')
             return
         }
-        navigator.geolocation.watchPosition(
+        
+        // Clear existing watch if any
+        if (geolocationWatchId !== null) {
+            navigator.geolocation.clearWatch(geolocationWatchId)
+        }
+        
+        geolocationWatchId = navigator.geolocation.watchPosition(
             (pos) => {
                 const { latitude, longitude, accuracy } = pos.coords
                 handleNewPosition(longitude, latitude, accuracy)
@@ -436,7 +534,17 @@
         if (coords.length === 0) {
             return true // Empty route is valid
         }
-        return coords.every((c) => Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number')
+        
+        // Use for loop for better performance with large arrays
+        for (let i = 0; i < coords.length; i++) {
+            const c = coords[i]
+            if (!Array.isArray(c) || c.length < 2 || 
+                typeof c[0] !== 'number' || typeof c[1] !== 'number' ||
+                !isFinite(c[0]) || !isFinite(c[1])) {
+                return false
+            }
+        }
+        return true
     }
 
     let wakeLock = null
@@ -477,6 +585,31 @@
         await tick()
         init()
         startGeolocation()
+    })
+
+    onDestroy(() => {
+        // Clean up timeouts
+        if (recenterTimeout) {
+            clearTimeout(recenterTimeout)
+        }
+        
+        // Clean up geolocation watch
+        if (geolocationWatchId !== null) {
+            navigator.geolocation.clearWatch(geolocationWatchId)
+        }
+        
+        // Clean up wake lock
+        if (wakeLock !== null) {
+            wakeLock.release()
+        }
+        
+        // Clear caches
+        bearingCache = {}
+        
+        // Remove event listeners if map exists
+        if (map) {
+            map.setTarget(null) // This cleans up the map
+        }
     })
 </script>
 
