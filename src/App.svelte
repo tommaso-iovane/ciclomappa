@@ -5,6 +5,22 @@
     import PWAInstallPrompt from './components/PWAInstallPrompt.svelte'
 
     onMount(async () => {
+        // Fix mobile viewport height issue
+        function setViewportHeight() {
+            const vh = window.innerHeight * 0.01
+            document.documentElement.style.setProperty('--vh', `${vh}px`)
+        }
+        
+        // Set initial viewport height
+        setViewportHeight()
+        
+        // Update on resize and orientation change
+        window.addEventListener('resize', setViewportHeight)
+        window.addEventListener('orientationchange', () => {
+            // Delay to account for browser UI changes
+            setTimeout(setViewportHeight, 500)
+        })
+
         // Enhanced PWA update checking
         if ('serviceWorker' in navigator) {
             try {
@@ -44,7 +60,7 @@
 </script>
 
 
-<div class="relative h-full w-full" id="main">
+<div class="relative h-full w-full overflow-hidden" id="main">
     <ToastContainer />
     <PWAInstallPrompt />
 
