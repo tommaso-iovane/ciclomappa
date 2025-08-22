@@ -23,11 +23,15 @@
     const MIN_DISTANTE_TO_UPDATE = 4
     const MIN_BEARING_DIFFERENCE_TO_ADD_POINT = 10 // degrees
     const MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS = 50 // meters
-    const MIN_DISTANCE_FOR_ROTATION = 5 // meters
+    const MIN_DISTANCE_FOR_ROTATION = 2 // meters - reduced for more responsive rotation
     const ANIMATION_THROTTLE_MS = 100 // Throttle map animations
-    const BEARING_CACHE_SIZE = 20 // Cache for bearing calculations
     const ROUTE_SIMPLIFICATION_TOLERANCE = 2 // meters - tolerance for route simplification
     const SIMPLIFICATION_INTERVAL = 10 // Simplify route every N points
+    
+    // Enhanced rotation constants
+    const ROTATION_SMOOTHING_FACTOR = 0.7 // Higher = more smoothing (0-1)
+    const MIN_BEARING_CHANGE_THRESHOLD = 3 // degrees - reduced threshold for more responsive rotation
+    const BEARING_WEIGHT_DECAY = 0.8 // Weight decay for older bearing samples
 
     const customTileSource = new XYZ({
         url: `${import.meta.env.VITE_MAP_URL}/cycle/{z}/{x}/{y}.png`,
@@ -53,12 +57,14 @@
 
     // Performance optimization variables
     let lastAnimationTime = 0
-    let bearingCache = {} // Use object instead of Map for broader compatibility
-    let isAnimating = false
     let geolocationWatchId = null
     let recenterTimeout = null
     let isAppVisible = true
     let backgroundTrackingCount = 0
+    
+    // Enhanced rotation variables
+    let lastSmoothedBearing = null // Last smoothed bearing for continuity
+    let bearingHistory = [] // History of bearings for better smoothing
 
     let map
     let geolocation
@@ -126,7 +132,7 @@
             // Performance optimizations
             pixelRatio: Math.min(window.devicePixelRatio || 1, 2) // Limit pixel ratio for performance
         })
-
+        
         geolocation = new Geolocation({
             tracking: true,
             projection: map.getView().getProjection(),
@@ -215,6 +221,18 @@
         // Detect when the user manually moves the map by dragging and stop following
         map.on('pointerdrag', function () {
             followingUser = false
+            
+            // Resume following after user stops interacting (auto-resume after 5 seconds)
+            if (recenterTimeout) {
+                clearTimeout(recenterTimeout)
+            }
+            recenterTimeout = setTimeout(() => {
+                if (!followingUser) {
+                    console.log('Auto-resuming map following after user interaction')
+                    followingUser = true
+                    recenterMap()
+                }
+            }, 5000)
         })
 
         // Initial view when map loads if geolocation is not immediately available
@@ -226,7 +244,7 @@
     }
 
     function recenterMap(rotation = null) {
-        if (!followingUser || isAnimating) {
+        if (!followingUser) {
             return
         }
 
@@ -236,12 +254,28 @@
             return
         }
         lastAnimationTime = now
-        isAnimating = true
 
-        let obj = { duration: 100, zoom }
+        let obj = { duration: 200, zoom }
 
-        if (rotation && enableRotation) {
-            obj.rotation = -rotation
+        // Handle rotation with smooth interpolation as part of the main animation
+        if (rotation !== null && enableRotation) {
+            // Calculate target rotation
+            const targetRot = -rotation
+            
+            // Check if rotation change is significant enough
+            const currentRot = map.getView().getRotation()
+            let rotationDiff = Math.abs(targetRot - currentRot)
+            
+            // Handle angle wrapping for shortest path
+            if (rotationDiff > Math.PI) {
+                rotationDiff = 2 * Math.PI - rotationDiff
+            }
+            
+            if (rotationDiff > (MIN_BEARING_CHANGE_THRESHOLD * Math.PI) / 180) {
+                // Apply smooth rotation interpolation
+                const smoothedRotation = interpolateRotation(currentRot, targetRot, 0.3)
+                obj.rotation = smoothedRotation
+            }
         }
 
         const coordinates = currentPosition
@@ -253,7 +287,6 @@
 
             const offsetCoordinates = map.getPixelFromCoordinate(coordinates)
             if (!offsetCoordinates) {
-                isAnimating = false
                 return
             }
             const newPixelCoordinates = [offsetCoordinates[0] + offset[0], offsetCoordinates[1] + offset[1]]
@@ -262,19 +295,11 @@
             obj.center = newCenter
         } else {
             console.warn('Current location not available.')
-            isAnimating = false
             return
         }
 
-        const animation = map.getView().animate(obj)
-        // Reset animation flag when animation completes
-        if (animation) {
-            setTimeout(() => {
-                isAnimating = false
-            }, obj.duration || 100)
-        } else {
-            isAnimating = false
-        }
+        // Animate both center and rotation together
+        map.getView().animate(obj)
     }
 
     const recenterOnUser = () => {
@@ -366,37 +391,59 @@
         return douglasPeucker(coords, toleranceCoords)
     }
 
-    // Calculate average bearing from the last coordinates with caching
-    function getAverageBearing() {
+    // Enhanced bearing calculation with smoothing
+    function getSmoothedBearing() {
         const coords = getActiveCoordinates()
         if (coords.length < 2) return null
 
-        // Create cache key from coordinates
-        const cacheKey = coords.map((c) => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|')
+        // Calculate weighted bearings from coordinate pairs
+        let weightedSumSin = 0
+        let weightedSumCos = 0
+        let totalWeight = 0
 
-        // Check cache first
-        if (bearingCache[cacheKey] !== undefined) {
-            return bearingCache[cacheKey]
-        }
-
-        let sumSin = 0
-        let sumCos = 0
         for (let i = 1; i < coords.length; i++) {
             const bearing = getBearing(coords[i - 1], coords[i])
+            const distance = getDistance(toLonLat(coords[i - 1]), toLonLat(coords[i]))
+            
+            // Weight by distance and recency (more recent = higher weight)
+            const distanceWeight = Math.min(distance / 10, 1) // Normalize distance influence
+            const recencyWeight = Math.pow(BEARING_WEIGHT_DECAY, coords.length - i - 1)
+            const combinedWeight = distanceWeight * recencyWeight
+            
             const rad = (bearing * Math.PI) / 180
-            sumSin += Math.sin(rad)
-            sumCos += Math.cos(rad)
+            weightedSumSin += Math.sin(rad) * combinedWeight
+            weightedSumCos += Math.cos(rad) * combinedWeight
+            totalWeight += combinedWeight
         }
-        const avgRad = Math.atan2(sumSin, sumCos)
+
+        if (totalWeight === 0) return null
+
+        const avgRad = Math.atan2(weightedSumSin / totalWeight, weightedSumCos / totalWeight)
         let avgDeg = (avgRad * 180) / Math.PI
         if (avgDeg < 0) avgDeg += 360
 
-        // Cache the result and limit cache size
-        const cacheKeys = Object.keys(bearingCache)
-        if (cacheKeys.length >= BEARING_CACHE_SIZE) {
-            delete bearingCache[cacheKeys[0]]
+        // Add to bearing history for additional smoothing
+        bearingHistory.push(avgDeg)
+        if (bearingHistory.length > 5) {
+            bearingHistory.shift()
         }
-        bearingCache[cacheKey] = avgDeg
+
+        // Apply final smoothing using bearing history
+        if (bearingHistory.length > 1) {
+            let smoothedSin = 0
+            let smoothedCos = 0
+            for (let i = 0; i < bearingHistory.length; i++) {
+                const weight = Math.pow(0.9, bearingHistory.length - i - 1)
+                const rad = (bearingHistory[i] * Math.PI) / 180
+                smoothedSin += Math.sin(rad) * weight
+                smoothedCos += Math.cos(rad) * weight
+            }
+            const smoothedRad = Math.atan2(smoothedSin, smoothedCos)
+            let smoothedDeg = (smoothedRad * 180) / Math.PI
+            if (smoothedDeg < 0) smoothedDeg += 360
+            
+            return smoothedDeg
+        }
 
         return avgDeg
     }
@@ -415,6 +462,18 @@
         let θ = Math.atan2(y, x)
         θ = (θ * 180) / Math.PI // convert to degrees
         return (θ + 360) % 360 // normalize
+    }
+
+    // Smooth rotation interpolation
+    function interpolateRotation(currentRad, targetRad, factor = ROTATION_SMOOTHING_FACTOR) {
+        // Handle angle wrapping (shortest path between angles)
+        let diff = targetRad - currentRad
+        
+        // Normalize difference to [-π, π]
+        while (diff > Math.PI) diff -= 2 * Math.PI
+        while (diff < -Math.PI) diff += 2 * Math.PI
+        
+        return currentRad + diff * factor
     }
 
     function updatePositionFeatures(coords, accuracy) {
@@ -530,9 +589,10 @@
 
         updateLastCoordinates(coords)
 
-        // Only calculate and apply rotation if user has moved at least MIN_DISTANCE_FOR_ROTATION meters
-        // from the last rotation position, or if this is the first position
+        // Enhanced rotation logic with more responsive triggering
         let shouldRotate = false
+        let distanceFromLastRotation = 0
+        
         if (lastRotationPosition === null) {
             // First position, allow rotation
             shouldRotate = true
@@ -540,28 +600,48 @@
         } else {
             // Check distance from last rotation position
             const [lastRotLon, lastRotLat] = toLonLat(lastRotationPosition)
-            const distance = getDistance([lastRotLon, lastRotLat], [lon, lat])
-            if (distance >= MIN_DISTANCE_FOR_ROTATION) {
+            distanceFromLastRotation = getDistance([lastRotLon, lastRotLat], [lon, lat])
+            
+            // More responsive rotation: trigger on smaller distance OR if we have good bearing data
+            if (distanceFromLastRotation >= MIN_DISTANCE_FOR_ROTATION || 
+                (distanceFromLastRotation >= 1 && getActiveCoordinates().length >= 3)) {
                 shouldRotate = true
                 lastRotationPosition = coords
             }
         }
 
         let rotation = null
-        if (shouldRotate) {
-            const avgBearing = getAverageBearing()
-            if (avgBearing !== null) {
-                rotation = (avgBearing * Math.PI) / 180
+        if (shouldRotate && getActiveCoordinates().length >= 2) {
+            // Use the enhanced smoothed bearing calculation
+            const smoothedBearing = getSmoothedBearing()
+            
+            if (smoothedBearing !== null) {
+                const smoothedBearingRad = (smoothedBearing * Math.PI) / 180
+                
+                // Apply additional smoothing if we have a previous bearing
+                if (lastSmoothedBearing !== null) {
+                    const lastBearingRad = (lastSmoothedBearing * Math.PI) / 180
+                    const smoothedRad = interpolateRotation(lastBearingRad, smoothedBearingRad, 0.4)
+                    rotation = smoothedRad
+                    lastSmoothedBearing = (smoothedRad * 180) / Math.PI
+                } else {
+                    rotation = smoothedBearingRad
+                    lastSmoothedBearing = smoothedBearing
+                }
+                
             }
         }
 
-        // Debounce recenter calls to reduce animation frequency
-        if (recenterTimeout) {
-            clearTimeout(recenterTimeout)
+        // Always recenter when following user, with rotation if available
+        if (followingUser) {
+            // Debounce recenter calls to reduce animation frequency
+            if (recenterTimeout) {
+                clearTimeout(recenterTimeout)
+            }
+            recenterTimeout = setTimeout(() => {
+                recenterMap(rotation)
+            }, 50) // Small delay to batch rapid position updates
         }
-        recenterTimeout = setTimeout(() => {
-            recenterMap(rotation)
-        }, 50) // Small delay to batch rapid position updates
     }
 
     async function downloadRoute() {
@@ -571,9 +651,6 @@
             const simplifiedRoute = simplifyRoute(routeCoords)
             if (simplifiedRoute.length < routeCoords.length) {
                 finalRoute = simplifiedRoute
-                console.log(
-                    `Route simplified for download: ${simplifiedRoute.length} points (${((1 - simplifiedRoute.length / routeCoords.length) * 100).toFixed(1)}% reduction)`
-                )
             }
         }
 
@@ -688,7 +765,6 @@
 
         // Don't start real geolocation if in emulation mode
         if (isGpsEmulationMode) {
-            console.log('Skipping real geolocation - GPS emulation mode is active')
             return
         }
 
@@ -917,8 +993,8 @@
         document.removeEventListener('visibilitychange', handleVisibilityChange)
         document.removeEventListener('keydown', handleKeyDown)
 
-        // Clear caches
-        bearingCache = {}
+        // Clear arrays
+        bearingHistory = []
 
         // Remove event listeners if map exists
         if (map) {
