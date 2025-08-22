@@ -1,5 +1,5 @@
 <script>
-    import { Download, MapPin, Rotate3d, Route, UploadIcon } from '@lucide/svelte'
+    import { Download, MapPin, Rotate3d, Route, UploadIcon, Gamepad2 } from '@lucide/svelte'
     import { slide } from 'svelte/transition'
 
     let {
@@ -11,7 +11,9 @@
         speedKmh,
         totalDistance,
         loadRouteGuide,
-        downloadRoute
+        downloadRoute,
+        toggleGpsEmulation,
+        isGpsEmulationMode
     } = $props()
 </script>
 
@@ -24,6 +26,16 @@
         <div class="flex items-center gap-1">
             <!-- <button onclick={zoomOut} class="btn" title="Top"><Minus size={16}></Minus></button>
             <button onclick={zoomIn} class="btn" title="Left"><Plus size={16}></Plus></button> -->
+            {#if window.location.hostname === 'localhost'}
+                <button
+                    class:btn-secondary={isGpsEmulationMode}
+                    onclick={toggleGpsEmulation}
+                    class="btn"
+                    title={isGpsEmulationMode ? 'Disable GPS emulation' : 'Enable GPS emulation (arrow keys)'}
+                >
+                    <Gamepad2 size={16}></Gamepad2>
+                </button>
+            {/if}
             <button class:btn-secondary={enableRotation} onclick={() => (enableRotation = !enableRotation)} class="btn"
                 ><Rotate3d size={16}></Rotate3d>
             </button>
@@ -38,7 +50,7 @@
     </div>
     <div class="flex items-center justify-between text-gray-800">
         <div>
-            <span class="font-bold">{speedKmh || 0}</span>
+            <span class="font-bold">{speedKmh > 5 ? speedKmh : 0}</span>
             <span>Km/h</span>
         </div>
         {#if isTracking}

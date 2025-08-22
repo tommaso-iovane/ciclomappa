@@ -49,7 +49,7 @@
     let speedKmh = $state('0.00')
     let isTracking = $state(false)
     let totalDistance = $state(0)
-    let routeCoords = []
+    let routeCoords = $state([])
 
     // Performance optimization variables
     let lastAnimationTime = 0
@@ -68,6 +68,12 @@
     let routeLayer
     let routeGuideFeature
     let routeGuideLayer
+
+    // GPS emulation variables
+    let isGpsEmulationMode = $state(false)
+    let emulatedPosition = null
+    const GPS_STEP_SIZE = 0.00005 // Approximately 5 meters step size
+    const EMULATION_UPDATE_INTERVAL = 200 // milliseconds
 
     const toggleTracking = () => {
         isTracking = !isTracking
@@ -590,9 +596,99 @@
         }
     }
 
+    // GPS Emulation Functions
+    function toggleGpsEmulation() {
+        isGpsEmulationMode = !isGpsEmulationMode
+        if (isGpsEmulationMode) {
+            // Stop real geolocation
+            if (geolocationWatchId !== null) {
+                navigator.geolocation.clearWatch(geolocationWatchId)
+                geolocationWatchId = null
+            }
+            
+            // Set initial emulated position (current position or default)
+            if (currentPosition) {
+                const [lon, lat] = toLonLat(currentPosition)
+                emulatedPosition = { longitude: lon, latitude: lat }
+            } else {
+                // Default to a location (you can change this to your preferred starting point)
+                emulatedPosition = { longitude: 12.4964, latitude: 41.9028 } // Rome, Italy
+            }
+            
+            console.log('GPS emulation mode enabled')
+            showToast('GPS emulation mode enabled - use arrow keys to move', 'info')
+        } else {
+            // Resume real geolocation
+            emulatedPosition = null
+            startGeolocation()
+            console.log('GPS emulation mode disabled')
+            showToast('GPS emulation mode disabled - using real GPS', 'info')
+        }
+    }
+
+    function moveEmulatedPosition(direction) {
+        if (!isGpsEmulationMode || !emulatedPosition) return
+
+        const step = GPS_STEP_SIZE
+        let { longitude, latitude } = emulatedPosition
+
+        switch (direction) {
+            case 'north':
+                latitude += step
+                break
+            case 'south':
+                latitude -= step
+                break
+            case 'east':
+                longitude += step
+                break
+            case 'west':
+                longitude -= step
+                break
+        }
+
+        emulatedPosition = { longitude, latitude }
+        
+        // Simulate GPS update
+        handleNewPosition(longitude, latitude, 10) // 10m accuracy
+        
+        // Update speed calculation for emulated movement
+        speedKmh = ((step * 111320) / (EMULATION_UPDATE_INTERVAL / 1000) * 3.6).toFixed(2)
+    }
+
+    function handleKeyDown(event) {
+        if (!isGpsEmulationMode) return
+
+        // Prevent default behavior for arrow keys to avoid page scrolling
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+            event.preventDefault()
+        }
+
+        switch (event.key) {
+            case 'ArrowUp':
+                moveEmulatedPosition('north')
+                break
+            case 'ArrowDown':
+                moveEmulatedPosition('south')
+                break
+            case 'ArrowLeft':
+                moveEmulatedPosition('west')
+                break
+            case 'ArrowRight':
+                moveEmulatedPosition('east')
+                break
+        }
+    }
+
     function startGeolocation() {
         if (!navigator.geolocation) {
             showToast('Geolocation is not supported by your browser.', 'error')
+            return
+        }
+
+        // Don't start real geolocation if in emulation mode
+        if (isGpsEmulationMode) {
+            console.log('Skipping real geolocation - GPS emulation mode is active')
             return
         }
 
@@ -797,6 +893,9 @@
         await tick()
         init()
         startGeolocation()
+        
+        // Add keyboard event listener for GPS emulation
+        document.addEventListener('keydown', handleKeyDown)
     })
 
     onDestroy(() => {
@@ -816,6 +915,7 @@
 
         // Remove event listeners
         document.removeEventListener('visibilitychange', handleVisibilityChange)
+        document.removeEventListener('keydown', handleKeyDown)
 
         // Clear caches
         bearingCache = {}
@@ -843,4 +943,6 @@
     {totalDistance}
     {loadRouteGuide}
     {downloadRoute}
+    {toggleGpsEmulation}
+    {isGpsEmulationMode}
 ></NavigationInfo>
