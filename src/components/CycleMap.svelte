@@ -837,6 +837,7 @@
     bind:enableRotation
     {recenterOnUser}
     {isTracking}
+    {routeCoords}
     {toggleTracking}
     {speedKmh}
     {totalDistance}

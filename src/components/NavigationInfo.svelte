@@ -6,6 +6,7 @@
         recenterOnUser,
         enableRotation = $bindable(),
         isTracking,
+        routeCoords,
         toggleTracking,
         speedKmh,
         totalDistance,
@@ -28,7 +29,7 @@
             </button>
             <button class="btn" onclick={loadRouteGuide}><UploadIcon size={16}></UploadIcon></button>
             <button class:btn-secondary={isTracking} onclick={toggleTracking} class="btn"><Route size={16}></Route> </button>
-            {#if isTracking}
+            {#if routeCoords?.length}
                 <button onclick={downloadRoute} transition:slide={{ duration: 200, axis: 'x' }} class="btn">
                     <Download size={16}></Download>
                 </button>
