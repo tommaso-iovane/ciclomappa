@@ -20,9 +20,10 @@
     import { getDistance } from 'ol/sphere.js'
     import { showToast } from '../lib/toast.js'
 
-    const MIN_DISTANTE_TO_UPDATE = 2
+    const MIN_DISTANTE_TO_UPDATE = 4
     const MIN_BEARING_DIFFERENCE_TO_ADD_POINT = 10 // degrees
     const MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS = 50 // meters
+    const MIN_DISTANCE_FOR_ROTATION = 5 // meters
 
     const customTileSource = new XYZ({
         url: `${import.meta.env.VITE_MAP_URL}/cycle/{z}/{x}/{y}.png`,
@@ -34,6 +35,7 @@
 
     let lastCoordinates = []
     let currentPosition = null
+    let lastRotationPosition = null 
     let zoom = 17
     let enableRotation = $state(true)
     let followingUser = true
@@ -313,11 +315,32 @@
         }
 
         updateLastCoordinates(coords)
-        const avgBearing = getAverageBearing(lastCoordinates)
-        let rotation = null
-        if (avgBearing !== null) {
-            rotation = (avgBearing * Math.PI) / 180
+        
+        // Only calculate and apply rotation if user has moved at least MIN_DISTANCE_FOR_ROTATION meters
+        // from the last rotation position, or if this is the first position
+        let shouldRotate = false
+        if (lastRotationPosition === null) {
+            // First position, allow rotation
+            shouldRotate = true
+            lastRotationPosition = coords
+        } else {
+            // Check distance from last rotation position
+            const [lastRotLon, lastRotLat] = toLonLat(lastRotationPosition)
+            const distance = getDistance([lastRotLon, lastRotLat], [lon, lat])
+            if (distance >= MIN_DISTANCE_FOR_ROTATION) {
+                shouldRotate = true
+                lastRotationPosition = coords
+            }
         }
+        
+        let rotation = null
+        if (shouldRotate) {
+            const avgBearing = getAverageBearing(lastCoordinates)
+            if (avgBearing !== null) {
+                rotation = (avgBearing * Math.PI) / 180
+            }
+        }
+        
         recenterMap(rotation)
     }
 
