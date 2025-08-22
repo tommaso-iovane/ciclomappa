@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte'
     import { Download, X, RefreshCw } from '@lucide/svelte'
+    import { showToast } from '../lib/toast.js'
 
     let deferredPrompt = $state(null)
     let showInstallPrompt = $state(false)
@@ -9,6 +10,8 @@
     let isIOS = $state(false)
     let isStandalone = $state(false)
     let updateSW = $state(null)
+    let isUpdating = $state(false)
+    let updateCheckInterval = null
 
     onMount(() => {
         // Check if app is already installed/running in standalone mode
@@ -23,15 +26,32 @@
             isInstalled = true
         }
 
-        // Import and register SW with update handling
+        // Import and register SW with enhanced update handling
         import('virtual:pwa-register').then(({ registerSW }) => {
             updateSW = registerSW({
                 immediate: true,
                 onNeedRefresh() {
+                    console.log('New version available!')
                     showUpdatePrompt = true
+                    showToast('New version available! Update for the latest features.', 'info')
                 },
                 onOfflineReady() {
                     console.log('App ready to work offline')
+                    showToast('App is ready to work offline!', 'success')
+                },
+                onRegistered(registration) {
+                    console.log('Service Worker registered successfully')
+                    
+                    // Set up periodic update checks (every 60 seconds)
+                    updateCheckInterval = setInterval(() => {
+                        if (registration && registration.update) {
+                            console.log('Checking for updates...')
+                            registration.update()
+                        }
+                    }, 60000)
+                },
+                onRegisterError(error) {
+                    console.error('Service Worker registration failed:', error)
                 }
             })
         }).catch((err) => {
@@ -74,6 +94,11 @@
         return () => {
             window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
             window.removeEventListener('appinstalled', handleAppInstalled)
+            
+            // Clear update check interval
+            if (updateCheckInterval) {
+                clearInterval(updateCheckInterval)
+            }
         }
     })
 
@@ -103,11 +128,22 @@
         localStorage.setItem('pwa-install-dismissed', Date.now().toString())
     }
 
-    const handleUpdateClick = () => {
-        if (updateSW) {
-            updateSW(true) // Force update
+    const handleUpdateClick = async () => {
+        if (updateSW && !isUpdating) {
+            isUpdating = true
+            try {
+                console.log('Updating PWA...')
+                showToast('Updating app...', 'info')
+                await updateSW(true) // Force update
+                showUpdatePrompt = false
+                showToast('Update successful! Reloading...', 'success')
+                // The page will reload automatically after update
+            } catch (error) {
+                console.error('Update failed:', error)
+                showToast('Update failed. Please try again.', 'error')
+                isUpdating = false
+            }
         }
-        showUpdatePrompt = false
     }
 
     const dismissUpdatePrompt = () => {
@@ -148,13 +184,20 @@
             <div class="mt-3 flex space-x-2">
                 <button
                     onclick={handleUpdateClick}
-                    class="flex-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
+                    disabled={isUpdating}
+                    class="flex-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                 >
-                    Update
+                    {#if isUpdating}
+                        <RefreshCw class="h-3 w-3 mr-1 animate-spin" />
+                        Updating...
+                    {:else}
+                        Update
+                    {/if}
                 </button>
                 <button
                     onclick={dismissUpdatePrompt}
-                    class="flex-1 rounded-md bg-blue-100 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-200"
+                    disabled={isUpdating}
+                    class="flex-1 rounded-md bg-blue-100 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                 >
                     Later
                 </button>

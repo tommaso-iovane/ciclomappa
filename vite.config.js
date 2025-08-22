@@ -12,8 +12,26 @@ export default defineConfig({
             registerType: 'autoUpdate',
             injectRegister: 'auto',
             workbox: {
-                globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-                cleanupOutdatedCaches: true
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+                cleanupOutdatedCaches: true,
+                runtimeCaching: [
+                    {
+                        urlPattern: /^https:\/\/.*\.(?:png|jpg|jpeg|svg|gif)$/,
+                        handler: 'CacheFirst',
+                        options: {
+                            cacheName: 'images-cache',
+                            expiration: {
+                                maxEntries: 100,
+                                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+                            }
+                        }
+                    }
+                ],
+                skipWaiting: true, // Immediately activate new service worker
+                clientsClaim: true // Take control of all clients immediately
+            },
+            devOptions: {
+                enabled: true // Enable PWA in development for testing
             },
             includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png'],
             manifest: {
@@ -27,6 +45,8 @@ export default defineConfig({
                 scope: '/',
                 categories: ['navigation', 'travel', 'sports'],
                 orientation: 'portrait-primary',
+                // Add update_url for automatic update checks
+                prefer_related_applications: false,
                 icons: [
                     {
                         src: 'pwa-64x64.png',
