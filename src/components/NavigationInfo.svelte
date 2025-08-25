@@ -1,5 +1,5 @@
 <script>
-    import { Download, MapPin, Rotate3d, Route, UploadIcon, Gamepad2 } from '@lucide/svelte'
+    import { Download, MapPin, Rotate3d, Route, UploadIcon, Gamepad2, Plus, Minus } from '@lucide/svelte'
     import { slide } from 'svelte/transition'
 
     let {
@@ -13,7 +13,9 @@
         loadRouteGuide,
         downloadRoute,
         toggleGpsEmulation,
-        isGpsEmulationMode
+        isGpsEmulationMode,
+        zoomIn,
+        zoomOut
     } = $props()
 </script>
 
@@ -24,8 +26,8 @@
         </button>
 
         <div class="flex items-center gap-1">
-            <!-- <button onclick={zoomOut} class="btn" title="Top"><Minus size={16}></Minus></button>
-            <button onclick={zoomIn} class="btn" title="Left"><Plus size={16}></Plus></button> -->
+            <!-- <button onclick={zoomOut} class="btn" title="Zoom Out"><Minus size={16}></Minus></button>
+            <button onclick={zoomIn} class="btn" title="Zoom In"><Plus size={16}></Plus></button> -->
             {#if window.location.hostname === 'localhost'}
                 <button
                     class:btn-secondary={isGpsEmulationMode}

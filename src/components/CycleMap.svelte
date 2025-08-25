@@ -23,14 +23,14 @@
     const MIN_DISTANTE_TO_UPDATE = 4
     const MIN_BEARING_DIFFERENCE_TO_ADD_POINT = 10 // degrees
     const MAX_DISTANCE_FOR_STRAIGHT_LINE_METERS = 50 // meters
-    const MIN_DISTANCE_FOR_ROTATION = 2 // meters - reduced for more responsive rotation
+    const MIN_DISTANCE_FOR_ROTATION = 1 // meters - reduced for more responsive rotation
     const ANIMATION_THROTTLE_MS = 100 // Throttle map animations
     const ROUTE_SIMPLIFICATION_TOLERANCE = 2 // meters - tolerance for route simplification
     const SIMPLIFICATION_INTERVAL = 10 // Simplify route every N points
     
     // Enhanced rotation constants
     const ROTATION_SMOOTHING_FACTOR = 0.7 // Higher = more smoothing (0-1)
-    const MIN_BEARING_CHANGE_THRESHOLD = 3 // degrees - reduced threshold for more responsive rotation
+    const MIN_BEARING_CHANGE_THRESHOLD = 1 // degrees - reduced threshold for more responsive rotation
     const BEARING_WEIGHT_DECAY = 0.8 // Weight decay for older bearing samples
 
     const customTileSource = new XYZ({
@@ -47,9 +47,9 @@
     let lastCoordinatesCount = 0
     let currentPosition = null
     let lastRotationPosition = null
-    let zoom = 17
+    let zoom = $state(17)
     let enableRotation = $state(true)
-    let followingUser = true
+    let followingUser = $state(true)
     let speedKmh = $state('0.00')
     let isTracking = $state(false)
     let totalDistance = $state(0)
@@ -221,18 +221,18 @@
         // Detect when the user manually moves the map by dragging and stop following
         map.on('pointerdrag', function () {
             followingUser = false
+            console.log('User moved map manually - following disabled until manual re-enable')
             
-            // Resume following after user stops interacting (auto-resume after 5 seconds)
+            // Clear any existing timeout
             if (recenterTimeout) {
                 clearTimeout(recenterTimeout)
+                recenterTimeout = null
             }
-            recenterTimeout = setTimeout(() => {
-                if (!followingUser) {
-                    console.log('Auto-resuming map following after user interaction')
-                    followingUser = true
-                    recenterMap()
-                }
-            }, 5000)
+        })
+
+        // Listen for zoom changes to sync our zoom state
+        map.getView().on('change:resolution', function () {
+            syncZoomFromMap()
         })
 
         // Initial view when map loads if geolocation is not immediately available
@@ -240,6 +240,8 @@
             if (!geolocation.getPosition()) {
                 console.log('Geolocation not yet available, setting default view.')
             }
+            // Sync initial zoom
+            syncZoomFromMap()
         })
     }
 
@@ -304,6 +306,7 @@
 
     const recenterOnUser = () => {
         followingUser = true
+        console.log('User manually enabled map following')
         recenterMap()
     }
 
@@ -394,7 +397,9 @@
     // Enhanced bearing calculation with smoothing
     function getSmoothedBearing() {
         const coords = getActiveCoordinates()
-        if (coords.length < 2) return null
+        if (coords.length < 2) {
+            return null
+        }
 
         // Calculate weighted bearings from coordinate pairs
         let weightedSumSin = 0
@@ -416,7 +421,9 @@
             totalWeight += combinedWeight
         }
 
-        if (totalWeight === 0) return null
+        if (totalWeight === 0) {
+            return null
+        }
 
         const avgRad = Math.atan2(weightedSumSin / totalWeight, weightedSumCos / totalWeight)
         let avgDeg = (avgRad * 180) / Math.PI
@@ -604,7 +611,7 @@
             
             // More responsive rotation: trigger on smaller distance OR if we have good bearing data
             if (distanceFromLastRotation >= MIN_DISTANCE_FOR_ROTATION || 
-                (distanceFromLastRotation >= 1 && getActiveCoordinates().length >= 3)) {
+                (distanceFromLastRotation >= 0.5 && getActiveCoordinates().length >= 3)) {
                 shouldRotate = true
                 lastRotationPosition = coords
             }
@@ -628,7 +635,6 @@
                     rotation = smoothedBearingRad
                     lastSmoothedBearing = smoothedBearing
                 }
-                
             }
         }
 
@@ -787,7 +793,9 @@
                 // Only update UI when app is visible to save resources
                 if (isAppVisible) {
                     setTimeout(() => {
-                        recenterMap()
+                        if (followingUser) {
+                            recenterMap()
+                        }
                         showLoader = false
                     }, 1000)
                 } else {
@@ -955,15 +963,36 @@
     // Re-acquire wake lock on visibility change (e.g., after tab switch)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
-    // const zoomIn = () => {
-    //     zoom++
-    //     recenterMap()
-    // }
+    const zoomIn = () => {
+        zoom = Math.min(zoom + 1, 22) // Limit to max zoom level
+        if (followingUser && map) {
+            recenterMap()
+        } else if (map) {
+            // If not following user, just update the zoom without recentering
+            map.getView().setZoom(zoom)
+        }
+    }
 
-    // const zoomOut = () => {
-    //     zoom--
-    //     recenterMap()
-    // }
+    const zoomOut = () => {
+        zoom = Math.max(zoom - 1, 1) // Limit to min zoom level
+        if (followingUser && map) {
+            recenterMap()
+        } else if (map) {
+            // If not following user, just update the zoom without recentering
+            map.getView().setZoom(zoom)
+        }
+    }
+
+    // Sync our zoom state with the map's actual zoom level
+    function syncZoomFromMap() {
+        if (map) {
+            const mapZoom = Math.round(map.getView().getZoom())
+            if (mapZoom !== zoom) {
+                zoom = mapZoom
+                console.log(`Zoom synced from map: ${zoom}`)
+            }
+        }
+    }
 
     onMount(async () => {
         await tick()
@@ -1021,4 +1050,6 @@
     {downloadRoute}
     {toggleGpsEmulation}
     {isGpsEmulationMode}
+    {zoomIn}
+    {zoomOut}
 ></NavigationInfo>
